@@ -40,7 +40,7 @@ module Reflex.Host.Basic
   ) where
 
 import Control.Concurrent (forkIO)
-import Control.Concurrent.Chan (newChan, readChan)
+import Control.Concurrent.BoundedChan (newBoundedChan, readChan)
 import Control.Concurrent.STM.TVar (newTVarIO, writeTVar, readTVarIO)
 import Control.Lens ((<&>))
 import Control.Monad (void, when, unless)
@@ -54,8 +54,18 @@ import Data.Foldable (for_, traverse_)
 import Data.Functor.Identity (Identity)
 import Data.Maybe (catMaybes, isJust)
 import Data.Traversable (for)
-import Reflex
+import Reflex.Class
+import Reflex.Spider
+import Reflex.Adjustable.Class
 import Reflex.Host.Class
+import Reflex.PerformEvent.Class
+import Reflex.PerformEvent.Base
+import Reflex.PostBuild.Class
+import Reflex.PostBuild.Base
+import Reflex.NotReady.Class
+import Reflex.TriggerEvent.Class
+import Reflex.Host.Class
+import Reflex.TriggerEvent.Bounded
 
 type BasicGuestConstraints t (m :: * -> *) =
   ( MonadReflexHost t m
@@ -174,9 +184,10 @@ instance ReflexHost t => NotReady t (BasicGuest t m) where
 -- basicHostForever guest = 'basicHostWithQuit' $ never <$ guest
 -- @
 basicHostForever
-  :: (forall t m. BasicGuestConstraints t m => BasicGuest t m ())
+  :: Int
+  -> (forall t m. BasicGuestConstraints t m => BasicGuest t m ())
   -> IO ()
-basicHostForever guest = basicHostWithQuit $ never <$ guest
+basicHostForever n guest = basicHostWithQuit n $ never <$ guest
 
 -- | Run a 'BasicGuest', and return when the 'Event' returned by the
 -- 'BasicGuest' fires.
@@ -196,14 +207,15 @@ basicHostForever guest = basicHostWithQuit $ never <$ guest
 -- for a demonstration of this pattern, and where to put the type
 -- annotations.
 basicHostWithQuit
-  :: (forall t m. BasicGuestConstraints t m => BasicGuest t m (Event t ()))
+  :: Int 
+  -> (forall t m. BasicGuestConstraints t m => BasicGuest t m (Event t ()))
   -> IO ()
-basicHostWithQuit guest =
+basicHostWithQuit n guest =
   withSpiderTimeline $ runSpiderHostForTimeline $ do
     -- Unpack the guest, get the quit event, the result of building the
     -- network, and a function to kick off each frame.
     (postBuild, postBuildTriggerRef) <- newEventWithTriggerRef
-    triggerEventChan <- liftIO newChan
+    triggerEventChan <- liftIO $ newBoundedChan n
     rHasQuit <- newRef False -- When to shut down
     (eQuit, FireCommand fire) <- hostPerformEventT
       . flip runTriggerEventT triggerEventChan
